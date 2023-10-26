@@ -1,0 +1,70 @@
+---
+
+- hosts: localhost
+  vars:
+     ser: [ '10.1.153.67', '172.30.21.14', '172.30.201.35']
+     active_servers: []
+  tasks:
+
+  - name: check for the connection
+    wait_for:
+      host: '{{ item }}'
+      port: 22
+      timeout: 20
+    register: connect_out
+    loop: '{{ ser }}'
+    ignore_errors: yes
+
+  - debug:
+      msg: "{{ connect_out }}"
+
+  - set_fact:
+      server_list: '{{ connect_out.results | list }}'
+
+  - debug:
+          msg: '{{ item.item }} {{ item.failed }}'
+    loop: '{{ server_list }}'
+
+  - name: create file
+    become: yes
+    file:
+      path: /tmp/server.csv
+      state: touch
+      mode: 0755
+
+  - name: update connection details in csv file
+    become: yes
+    lineinfile:
+            path: /tmp/server.csv
+            line: 'Server_ip: {{ item.item }} ,Connection failed:{{ item.failed }}'
+    loop: '{{ server_list }}'
+
+  - name: add host
+    add_host:
+       host: '{{ item }}'
+       groups: linux
+    loop: ['172.30.201.78', '172.30.201.74', '172.30.201.72']
+
+- hosts: linux
+  tasks:
+
+  - name: collect facts about system services
+    service_facts:
+    register: services_state
+
+
+    #  - name: Debug
+    #    debug:
+    #     msg: "{{ services_state.ansible_facts.services['firewalld.service']['status'] }}"
+
+  - name: Check firewalld service status
+    service:
+      name: firewalld
+    register: firewalld_status
+
+  - debug:
+          msg: '{{ firewalld_status }}'
+
+  - name: Print firewalld service status
+    debug:
+      msg: "Firewalld service status: {{ firewalld_status.status.ActiveState }}"
