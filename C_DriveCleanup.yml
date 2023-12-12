@@ -25,3 +25,46 @@
       win_find:
         paths: 'C:\Windows\SoftwareDistribution'
       register: collected_files
+    - name: collect directories
+      win_find:
+        paths: 'C:\Windows\SoftwareDistribution'
+        file_type: directory
+      register: collected_directories
+
+    - name: remove collected files and directories
+      win_file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: >
+        {{
+          collected_files.files
+          + collected_directories.files
+        }}
+      ignore_errors: yes
+- name: start windows update service
+  win_service:
+    name: Wuauserv
+    state: started
+  register: Start_service
+  retries: 2
+  ignore_errors: yes
+
+- debug:
+    msg: 'Windows update Service restart failed --->  {{ Start_service }}'
+  when: Start_service is failed
+
+## Cleaunp the Appdata folder only remove files older than 90 days
+
+- name: find all files that are older than 90 days with .dat extension
+  win_find:
+    paths: C:\Windows\ServiceProfiles\LocalService\Appdata
+    age: 90d
+    patterns: '*.dat'
+  register: filesOlderThan90
+
+- name: remove older than 90 days
+  win_file:
+    path: "{{ item.path }}"
+    state: absent
+  with_items: "{{ filesOlderThan90.files }}"
+  ignore_errors: yes
