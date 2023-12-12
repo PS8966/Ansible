@@ -1,0 +1,27 @@
+---
+# tasks file for Weekly_C_Drive_Cleanup_DEV
+
+- name: delete files in installer folder
+  win_shell: Remove-Item -Path "$env:WINDIR\Installer\$PatchCache$" -Recurse -Force
+  ignore_errors: yes
+
+#  win_command: rmdir /q /s %WINDIR%\Installer\$PatchCache$
+
+# For Software Distribution
+
+- name: stop windows update service
+  win_service:
+    name: Wuauserv
+    state: stopped
+  register: Service_status
+  retries: 2
+  delay: 5
+  ignore_errors: yes
+
+- name: Cleanup folder when service is stopped
+  when: Service_status is success
+  block:
+    - name: collect files
+      win_find:
+        paths: 'C:\Windows\SoftwareDistribution'
+      register: collected_files
