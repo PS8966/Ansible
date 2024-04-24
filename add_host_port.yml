@@ -1,0 +1,147 @@
+---
+- name: fetch server ip
+  gather_facts: no
+  hosts: localhost
+  become: false
+
+  tasks:
+  - name: fetching server ip's list from file
+    block:
+#    - include_role:
+#        name: iautomate_update
+#      vars:
+#        status_codes: 0
+#        iautomate_success: "iAutomate execution In-Progress"
+#      run_once: true
+
+    - add_host:
+        host: 10.105.16.4
+        ansible_user: '{{ WinUsername}}'
+        ansible_password: '{{ WinPassword }}'
+        ansible_port: 5985
+        ansible_connection: winrm
+        ansible_winrm_transport: ntlm
+        ansible_winrm_server_cert_validation: ignore
+
+
+    - name: Touch a file
+      win_file:
+        path: C:\Temp\{{ Pre }}-Patching_HealthCheck_servers_report_{{ TicketNumber }}.csv
+        state: touch
+      delegate_to: "{{ delegate_to_server }}"
+      run_once: true
+
+    - name: Touch a file
+      win_file:
+        path: C:\Temp\{{ Pre }}-Patching_Unreachable_servers_report_{{ TicketNumber }}.csv
+        state: touch
+      delegate_to: "{{ delegate_to_server }}"
+      run_once: true
+
+    - name: Save CSV headers
+      win_lineinfile:
+        dest: 'C:\Temp\{{ Pre }}-Patching_HealthCheck_servers_report_{{ TicketNumber }}.csv'
+        line: "'IP Address','Hostname','Ping_Status','Last_Boot_Time','OS Type','KB_HotFixID','KB_InstalledOn','KB_Description','Microsoft 365 Apps Version','Microsoft Edge Version'"
+#        insertafter: '^$'
+        create: true
+#        state: present
+      delegate_to: "{{ delegate_to_server }}"
+      run_once: true
+
+- hosts: 10.105.16.4
+  gather_facts: no
+  tasks:
+    - set_fact:
+        server_name: "{{ target_host | trim }}"
+    - debug:
+       var: server_name
+
+    - name: Split IP addresses
+      set_fact:
+        ip_addresses: "{{ server_name | regex_replace('\\r\n', ',') }}"
+
+    - name: Split the value with comma
+      set_fact:
+        target_host_list: "{{ ip_addresses.split(',') }}"
+
+    - debug:
+        var: target_host_list
+
+    - name: create server file
+      win_file:
+        path: C:\Temp\portTest
+        state: directory
+
+    - name: create server file
+      win_file:
+        path: 'C:\Temp\portTest\servers_{{ item }}.txt'
+        state: touch
+      loop:
+        - '5985'
+        - '5986'
+
+    - name: run script to check 5985 and 5986 ports
+      win_shell: |
+                 $serverIpAddress = '{{ item }}'
+                 $port5985Result = Test-NetConnection -ComputerName $serverIpAddress -Port 5985 -InformationLevel Quiet
+                 $port5986Result = Test-NetConnection -ComputerName $serverIpAddress -Port 5986 -InformationLevel Quiet
+                 if ($port5985Result -eq $true) {
+                   $filePath5985 = 'C:\Temp\portTest\servers_5985.txt'
+                   Add-Content -Path $filePath5985 -Value $serverIpAddress
+                 }
+                 elseif ($port5986Result -eq $true) {
+                   $filePath5986 = 'C:\Temp\portTest\servers_5986.txt'
+                   Add-Content -Path $filePath5986 -Value $serverIpAddress
+                 }
+                 else {
+                   $filePathNotReachable = 'C:\Temp\portTest\not_reachable_servers_both_ports.txt'
+                   Add-Content -Path $filePathNotReachable -Value $serverIpAddress
+                 }
+      loop: '{{ target_host_list }}'
+
+    - name: Read hosts from file 5985
+      win_shell: 'Get-Content C:\Temp\portTest\servers_5985.txt'
+      register: host_content_5985
+
+    - name: Read hosts from file 5986
+      win_shell: 'Get-Content C:\Temp\portTest\servers_5986.txt'
+      register: host_content_5986
+
+
+    - name: Add hosts to inventory
+      add_host:
+        name: "{{ item }}"
+        groups: hosts_5985
+        ansible_user: '{{ WinUsername}}'
+        ansible_password: '{{ WinPassword }}'
+        ansible_connection: winrm
+        ansible_winrm_transport: ntlm
+        ansible_winrm_server_cert_validation: ignore
+      with_items: "{{ host_content_5985.stdout_lines | trim }}"
+
+
+    - name: Add hosts to inventory
+      add_host:
+        name: "{{ item }}"
+        groups: hosts_5986
+        ansible_user: '{{ WinUsername}}'
+        ansible_password: '{{ WinPassword }}'
+        ansible_connection: winrm
+        ansible_winrm_transport: ntlm
+        ansible_winrm_server_cert_validation: ignore
+      with_items: "{{ host_content_5986.stdout_lines|trim }}"
+
+
+- name: run role on 5985 servers
+  ignore_unreachable: true
+  hosts: hosts_5985
+  tasks:
+      - include_role:
+          name: "{{ role_name }}"
+
+- name: run role on 5986 server
+  hosts: hosts_5986
+  ignore_unreachable: true
+  tasks:
+    - include_role:
+          name: "{{ role_name }}"
