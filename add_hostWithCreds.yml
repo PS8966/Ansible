@@ -1,0 +1,190 @@
+---
+
+- name: Connect to local host to fetch the file
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+  - set_fact:
+        server_name: "{{ target_host | trim }}"
+  - debug:
+      var: server_name
+
+  - name: Split IP addresses
+    set_fact:
+      ip_addresses: "{{ server_name | regex_replace('\\r\n',',') }}"
+
+  - name: Split the value with comma
+    set_fact:
+      target_host_list: "{{ ip_addresses.split(',') }}"
+
+  - debug:
+      var: target_host_list
+
+
+  - add_host:
+      host: '{{ item }}'
+      ansible_user: 'CRH-UNI\{{ PROD_Username }}'
+      ansible_password: "{{ PROD_Password }}"
+      groups:  linux_iautomate
+    with_items: "{{ target_host_list }}"
+#      no_log: true
+
+  - add_host:
+        host: 10.254.0.99
+        ansible_user: '{{ PROD_Username }}'
+        ansible_password: '{{ PROD_Password }}'
+        ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
+        ansible_port: 22
+    no_log: true
+
+  - add_host:
+        groups: win_host
+        host: 10.105.16.4
+        ansible_user: '{{ WinUsername}}'
+        ansible_password: '{{ WinPassword }}'
+        ansible_port: 5985
+        ansible_connection: winrm
+        ansible_winrm_transport: ntlm
+        ansible_winrm_server_cert_validation: ignore
+        ansible_winrm_connection_timeout: 1200
+    no_log: true
+
+- name: Check reachability of servers and list non-reachable ones
+  hosts: linux_iautomate
+  gather_facts: no
+  tasks:
+
+    - name: connection check for target server
+      wait_for_connection:
+          timeout: 10
+      register: connection_result
+      until: connection_result is succeeded
+      delay: 5
+      retries: 2
+      ignore_errors: yes
+
+    - name: include pre patch role
+      include_role:
+        name: '{{ role_name }}'
+      when: connection_result is succeeded
+
+    - name: Set non-reachable servers fact
+      set_fact:
+        non_reachable_servers: "{{ non_reachable_servers | default([]) + [inventory_hostname] }}"
+      when: connection_result.failed
+
+- name: Collect and display non-reachable servers
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+    - set_fact:
+        all_non_reachable_servers: []
+    - name: Gather non-reachable servers from the specified group
+      set_fact:
+        all_non_reachable_servers: "{{ all_non_reachable_servers | default([]) + hostvars[item].non_reachable_servers | default([]) }}"
+      loop: "{{ groups['linux_iautomate'] }}"
+      when: hostvars[item].non_reachable_servers is defined
+
+    - name: Display non-reachable servers
+      debug:
+        msg: "Non-reachable servers: {{ all_non_reachable_servers }}"
+
+    - name: Add hosts to check with dev user
+      add_host:
+        name: "{{ item }}"
+        groups: linux_iautomate_dev
+        ansible_user: 'DEV\{{ DEV_Username }}'
+        ansible_password: "{{ DEV_Password }}"
+      with_items: "{{ all_non_reachable_servers }}"
+
+- name: Check reachability of servers and list non-reachable dev servers
+  hosts: linux_iautomate_dev
+  gather_facts: no
+  tasks:
+
+    - name: connection check for target
+      wait_for_connection:
+          timeout: 10
+      register: connection_result1
+      until: connection_result1 is succeeded
+      delay: 5
+      retries: 2
+      ignore_errors: yes
+
+    - name: include pre patch role
+      include_role:
+        name: '{{ role_name }}'
+      when: connection_result is succeeded
+
+    - name: Set non-reachable servers fact
+      set_fact:
+        non_reachable_servers_dev: "{{ non_reachable_servers_dev | default([]) + [inventory_hostname] }}"
+      when: connection_result1.failed
+
+- name: Collect and display non-reachable dev servers
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+    - set_fact:
+        all_non_reachable_servers_dev: []
+    - name: Gather non-reachable servers from the specified group
+      set_fact:
+        all_non_reachable_servers_dev: "{{ all_non_reachable_servers_dev | default([]) + hostvars[item].non_reachable_servers_dev | default([]) }}"
+      loop: "{{ groups['linux_iautomate_dev'] }}"
+      when: hostvars[item].non_reachable_servers_dev is defined
+
+    - name: Display non-reachable servers
+      debug:
+        msg: "Non-reachable servers DEV: {{ all_non_reachable_servers_dev }}"
+
+    - name: Add hosts to check with local user
+      add_host:
+        name: "{{ item }}"
+        groups: linux_iautomate_local
+        ansible_user: '{{ PROD_Username }}'
+        ansible_password: '{{ PROD_Password }}'
+      with_items: "{{ all_non_reachable_servers_dev }}"
+
+- name: Check reachability of servers and list non-reachable local servers
+  hosts: linux_iautomate_local
+  gather_facts: no
+  tasks:
+
+    - name: connection check for target
+      wait_for_connection:
+          timeout: 10
+      register: connection_result2
+      until: connection_result2 is succeeded
+      delay: 5
+      retries: 2
+      ignore_errors: yes
+
+    - name: include pre patch role
+      include_role:
+        name: '{{ role_name }}'
+      when: connection_result is succeeded
+
+    - name: Set non-reachable servers fact
+      set_fact:
+        non_reachable_servers_local: "{{ non_reachable_servers_local | default([]) + [inventory_hostname] }}"
+      when: connection_result2.failed
+
+- name: Collect and display non-reachable local servers
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+    - set_fact:
+        all_non_reachable_servers_local: []
+    - name: Gather non-reachable servers from the specified group
+      set_fact:
+        all_non_reachable_servers_local: "{{ all_non_reachable_servers_local | default([]) + hostvars[item].non_reachable_servers_local | default([]) }}"
+      loop: "{{ groups['linux_iautomate_local'] }}"
+      when: hostvars[item].non_reachable_servers_local is defined
+
+    - name: Display non-reachable servers
+      debug:
+        msg: "Non-reachable servers local: {{ all_non_reachable_servers_local }}"
